@@ -1,0 +1,160 @@
+// -----------------------------
+// server.js
+// -----------------------------
+const express = require("express");
+const http = require("http");
+const mongoose = require("mongoose");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const socketIO = require("socket.io");
+
+dotenv.config();
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIO(server, {
+  cors: { origin: "*" },
+});
+
+const connectDB = require("./config/db");
+const messageRoutes = require("./routes/messageRoutes");
+const authRoutes = require("./routes/authRoutes");
+
+connectDB();
+
+app.use(cors());
+app.use(express.json());
+
+app.use("/api/messages", messageRoutes);
+app.use("/api/auth", authRoutes);
+
+io.on("connection", (socket) => {
+  console.log("Client connected:", socket.id);
+
+  socket.on("join", (roomId) => {
+    socket.join(roomId);
+    console.log(`Socket ${socket.id} joined room ${roomId}`);
+  });
+
+  socket.on("sendMessage", (data) => {
+    io.to(data.roomId).emit("receiveMessage", data);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+// -----------------------------
+// config/db.js
+// -----------------------------
+const mongoose = require("mongoose");
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("MongoDB connected");
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+
+
+// -----------------------------
+// models/userModel.js
+// -----------------------------
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+});
+
+module.exports = mongoose.model("User", userSchema);
+
+
+// -----------------------------
+// models/messageModel.js
+// -----------------------------
+const mongoose = require("mongoose");
+
+const messageSchema = new mongoose.Schema({
+  sender: { type: String, required: true },
+  text: { type: String, required: true },
+  roomId: { type: String, required: true },
+  timestamp: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model("Message", messageSchema);
+
+
+// -----------------------------
+// routes/authRoutes.js
+// -----------------------------
+const express = require("express");
+const User = require("../models/userModel");
+
+const router = express.Router();
+
+router.post("/register", async (req, res) => {
+  const { username } = req.body;
+  try {
+    let user = await User.findOne({ username });
+    if (user) return res.status(400).json({ message: "User already exists" });
+
+    user = new User({ username });
+    await user.save();
+    res.status(201).json(user);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;
+
+
+// -----------------------------
+// routes/messageRoutes.js
+// -----------------------------
+const express = require("express");
+const Message = require("../models/messageModel");
+
+const router = express.Router();
+
+router.post("/", async (req, res) => {
+  const { sender, text, roomId } = req.body;
+  try {
+    const message = new Message({ sender, text, roomId });
+    await message.save();
+    res.status(201).json(message);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/:roomId", async (req, res) => {
+  try {
+    const messages = await Message.find({ roomId: req.params.roomId }).sort("timestamp");
+    res.status(200).json(messages);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;
+
+
+// -----------------------------
+// .env (create this file in root)
+// -----------------------------
+PORT=5000
+MONGO_URI=mongodb://localhost:27017/chat-app
